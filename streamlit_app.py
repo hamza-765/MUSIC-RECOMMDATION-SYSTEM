@@ -9,29 +9,11 @@ BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR     = os.path.join(BASE_DIR, "model_outputs")
 PROCESSED_DIR = os.path.join(BASE_DIR, "processed")
 
-# ── Debug — show exactly what files are available ─────────────
-def show_available_files():
-    st.write("**Files in model_outputs:**")
-    if os.path.exists(MODEL_DIR):
-        st.write(os.listdir(MODEL_DIR))
-    else:
-        st.write("model_outputs folder NOT FOUND")
-
-    st.write("**Files in processed:**")
-    if os.path.exists(PROCESSED_DIR):
-        st.write(os.listdir(PROCESSED_DIR))
-    else:
-        st.write("processed folder NOT FOUND")
-
-# ── Cached loaders ────────────────────────────────────────────
+# ── Loaders ───────────────────────────────────────────────────
 @st.cache_resource
 def load_model():
-    path = os.path.join(MODEL_DIR, "lgbm_model.pkl")
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"lgbm_model.pkl not found at {path}")
-    with open(path, "rb") as f:
-        model, feat_cols = pickle.load(f)
-    return model, feat_cols
+    with open(os.path.join(MODEL_DIR, "lgbm_model.pkl"), "rb") as f:
+        return pickle.load(f)
 
 @st.cache_resource
 def load_user_index():
@@ -50,9 +32,8 @@ def load_user_index():
         }
 
     raise FileNotFoundError(
-        f"Neither user_index.parquet.pkl nor features_deploy.parquet "
-        f"found in {PROCESSED_DIR}\n"
-        f"Available files: {os.listdir(PROCESSED_DIR) if os.path.exists(PROCESSED_DIR) else 'folder missing'}"
+        f"No feature file found. Files in processed/: "
+        f"{os.listdir(PROCESSED_DIR) if os.path.exists(PROCESSED_DIR) else 'folder missing'}"
     )
 
 # ── Load everything ───────────────────────────────────────────
@@ -60,26 +41,43 @@ try:
     model, feat_cols = load_model()
     user_index       = load_user_index()
     user_list        = sorted(user_index.keys())
+
+    # Build summary stats from index directly — no features_df needed
+    total_users = len(user_list)
+    total_songs = sum(len(v) for v in user_index.values())
+    sample_df   = next(iter(user_index.values()))
+    repeat_rate = sum(
+        v["label"].mean() for v in user_index.values()
+    ) / total_users
+
 except Exception as e:
     st.error(f"❌ Could not load model: {e}")
-    show_available_files()   # ← shows exactly what files are present
     st.stop()
+
+# ── Page Config ───────────────────────────────────────────────
+st.set_page_config(
+    page_title="Spotify Repeat Predictor",
+    page_icon="🎵",
+    layout="wide",
+)
 
 # ── Header ────────────────────────────────────────────────────
 st.title("🎵 Spotify Repeat Play Predictor")
 st.markdown("Predict whether a user will replay a song within **30 days**.")
+
+# ── Sidebar ───────────────────────────────────────────────────
 st.sidebar.success("Model loaded ✅")
 st.sidebar.markdown(f"**Features:** {len(feat_cols)}")
-st.sidebar.markdown(f"**Users:** {features_df['user'].nunique():,}")
-st.sidebar.markdown(f"**Songs:** {features_df['song'].nunique():,}")
-st.divider()
-
-# ── Sidebar settings ──────────────────────────────────────────
+st.sidebar.markdown(f"**Users:** {total_users:,}")
+st.sidebar.markdown(f"**Songs:** {total_songs:,}")
+st.sidebar.markdown(f"**Repeat rate:** {repeat_rate:.1%}")
+st.sidebar.divider()
 st.sidebar.header("⚙️ Settings")
 top_n     = st.sidebar.slider("Top N Recommendations", 5, 20, 10)
 threshold = st.sidebar.slider("Repeat Threshold", 0.1, 0.9, 0.5, step=0.05)
 
-# ── Tabs ──────────────────────────────────────────────────────
+st.divider()
+
 tab1, tab2, tab3 = st.tabs(["🔮 Predict", "📋 Recommendations", "📊 Model Info"])
 
 
@@ -87,84 +85,82 @@ tab1, tab2, tab3 = st.tabs(["🔮 Predict", "📋 Recommendations", "📊 Model 
 with tab1:
     st.subheader("Single Song Prediction")
 
-    # Show sample user IDs
-    sample_ids = features_df["user"].unique()[:5].tolist()
-    st.info(f"Sample user IDs: `{'`, `'.join(sample_ids[:3])}`")
+    sample_ids = user_list[:3]
+    st.info(f"Sample user IDs: `{'`, `'.join(sample_ids)}`")
 
     col1, col2 = st.columns(2)
     with col1:
-        user_id = st.text_input("User ID", value=sample_ids[0], key="predict_user")
+        user_id   = st.text_input("User ID", value=sample_ids[0], key="predict_user")
+
     with col2:
-        # Show songs for selected user
-        user_songs = features_df[features_df["user"] == user_id]["song"].tolist()
-        if user_songs:
-            song_id = st.selectbox("Song ID", options=user_songs, key="predict_song")
+        user_rows = user_index.get(user_id, pd.DataFrame())
+        if not user_rows.empty:
+            song_id = st.selectbox("Song ID", options=user_rows["song"].tolist(), key="predict_song")
         else:
             song_id = st.text_input("Song ID", key="predict_song_text")
+            if user_id:
+                st.warning(f"User '{user_id}' not found.")
 
     if st.button("🔮 Predict", type="primary", key="btn_predict"):
-        row = features_df[
-            (features_df["user"] == user_id) &
-            (features_df["song"] == song_id)
-        ]
-
-        if row.empty:
-            st.warning("User/Song combination not found in dataset.")
+        if user_rows.empty:
+            st.warning("User not found in dataset.")
         else:
-            X    = row[feat_cols].fillna(-1)
-            prob = float(model.predict(X)[0])
-            actual = int(row["label"].values[0])
-
-            st.divider()
-            col_a, col_b, col_c = st.columns(3)
-            col_a.metric("Repeat Probability", f"{prob:.1%}")
-            col_b.metric("Prediction", "✅ Will Repeat" if prob >= threshold else "❌ Won't Repeat")
-            col_c.metric("Actual Label", "Repeat ✅" if actual == 1 else "No Repeat ❌")
-
-            st.progress(prob)
-
-            if int(prob >= threshold) == actual:
-                st.success(f"Model got it **correct**! Predicted {'repeat' if prob >= threshold else 'no repeat'}, actual was {'repeat' if actual == 1 else 'no repeat'}.")
+            row = user_rows[user_rows["song"] == song_id]
+            if row.empty:
+                st.warning("Song not found for this user.")
             else:
-                st.error(f"Model got it **wrong**. Predicted {'repeat' if prob >= threshold else 'no repeat'}, actual was {'repeat' if actual == 1 else 'no repeat'}.")
+                prob   = float(model.predict(row[feat_cols].fillna(-1))[0])
+                actual = int(row["label"].values[0])
+
+                st.divider()
+                col_a, col_b, col_c = st.columns(3)
+                col_a.metric("Repeat Probability", f"{prob:.1%}")
+                col_b.metric("Prediction", "✅ Will Repeat" if prob >= threshold else "❌ Won't Repeat")
+                col_c.metric("Actual Label", "Repeat ✅" if actual == 1 else "No Repeat ❌")
+                st.progress(prob)
+
+                if int(prob >= threshold) == actual:
+                    st.success("Model got it **correct**!")
+                else:
+                    st.error(
+                        f"Model got it **wrong**. "
+                        f"Predicted {'repeat' if prob >= threshold else 'no repeat'}, "
+                        f"actual was {'repeat' if actual == 1 else 'no repeat'}."
+                    )
 
 
 # ── TAB 2 · Recommendations ───────────────────────────────────
 with tab2:
     st.subheader("Top Song Recommendations")
 
-    sample_ids = features_df["user"].unique()[:10].tolist()
-    st.info(f"Sample user IDs: `{'`, `'.join(sample_ids[:3])}`")
-
     rec_user = st.selectbox(
         "Select a User",
-        options=features_df["user"].unique()[:100],
-        key="rec_user"
+        options=user_list[:200],
+        key="rec_user",
     )
 
     if st.button("📋 Get Recommendations", type="primary", key="btn_recommend"):
-        user_rows = features_df[features_df["user"] == rec_user].copy()
+        user_rows = user_index.get(rec_user, pd.DataFrame())
 
         if user_rows.empty:
             st.warning("User not found.")
         else:
-            user_rows["repeat_prob"] = model.predict(user_rows[feat_cols].fillna(-1))
-            top = (
-                user_rows
-                .sort_values("repeat_prob", ascending=False)
-                .head(top_n)[["song", "repeat_prob", "label"]]
-                .reset_index(drop=True)
-            )
-            top.index += 1
-            top["correct"] = (
-                ((top["repeat_prob"] >= threshold) & (top["label"] == 1)) |
-                ((top["repeat_prob"] <  threshold) & (top["label"] == 0))
-            )
+            with st.spinner("Scoring songs..."):
+                user_rows = user_rows.copy()
+                user_rows["repeat_prob"] = model.predict(
+                    user_rows[feat_cols].fillna(-1)
+                )
+                top = (
+                    user_rows
+                    .sort_values("repeat_prob", ascending=False)
+                    .head(top_n)[["song", "repeat_prob", "label"]]
+                    .reset_index(drop=True)
+                )
+                top.index += 1
 
             st.success(f"Top {top_n} songs for **{rec_user}**")
             st.dataframe(top, use_container_width=True)
 
-            # Bar chart
             fig, ax = plt.subplots(figsize=(8, 4))
             colors = ["#5563D4" if p >= threshold else "#B0AEC9"
                       for p in top["repeat_prob"]]
@@ -177,7 +173,6 @@ with tab2:
             plt.tight_layout()
             st.pyplot(fig)
 
-            # Summary metrics
             col1, col2, col3 = st.columns(3)
             col1.metric("Songs Analysed",    len(user_rows))
             col2.metric("Predicted Repeats", int((top["repeat_prob"] >= threshold).sum()))
@@ -189,7 +184,6 @@ with tab3:
     st.subheader("Model Information")
 
     col1, col2 = st.columns(2)
-
     with col1:
         st.markdown("**Pipeline Steps**")
         steps = [
@@ -222,7 +216,7 @@ with tab3:
     st.divider()
     st.markdown("**Dataset Stats**")
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Samples", f"{len(features_df):,}")
-    col2.metric("Users",         f"{features_df['user'].nunique():,}")
-    col3.metric("Songs",         f"{features_df['song'].nunique():,}")
-    col4.metric("Repeat Rate",   f"{features_df['label'].mean():.1%}")
+    col1.metric("Total Users",  f"{total_users:,}")
+    col2.metric("Total Songs",  f"{total_songs:,}")
+    col3.metric("Repeat Rate",  f"{repeat_rate:.1%}")
+    col4.metric("Features",     f"{len(feat_cols)}")
