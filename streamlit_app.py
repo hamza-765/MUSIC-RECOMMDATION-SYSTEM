@@ -4,58 +4,65 @@ import pickle
 import os
 import matplotlib.pyplot as plt
 
+# ── Paths ─────────────────────────────────────────────────────
 BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR     = os.path.join(BASE_DIR, "model_outputs")
 PROCESSED_DIR = os.path.join(BASE_DIR, "processed")
 
+# ── Debug — show exactly what files are available ─────────────
+def show_available_files():
+    st.write("**Files in model_outputs:**")
+    if os.path.exists(MODEL_DIR):
+        st.write(os.listdir(MODEL_DIR))
+    else:
+        st.write("model_outputs folder NOT FOUND")
+
+    st.write("**Files in processed:**")
+    if os.path.exists(PROCESSED_DIR):
+        st.write(os.listdir(PROCESSED_DIR))
+    else:
+        st.write("processed folder NOT FOUND")
+
+# ── Cached loaders ────────────────────────────────────────────
 @st.cache_resource
 def load_model():
-    with open(os.path.join(MODEL_DIR, "lgbm_model.pkl"), "rb") as f:
+    path = os.path.join(MODEL_DIR, "lgbm_model.pkl")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"lgbm_model.pkl not found at {path}")
+    with open(path, "rb") as f:
         model, feat_cols = pickle.load(f)
     return model, feat_cols
 
 @st.cache_resource
 def load_user_index():
-    # Try pre-built index first (fastest)
     idx_path = os.path.join(PROCESSED_DIR, "user_index.parquet.pkl")
+    par_path = os.path.join(PROCESSED_DIR, "features_deploy.parquet")
+
     if os.path.exists(idx_path):
         with open(idx_path, "rb") as f:
             return pickle.load(f)
 
-    # Fallback — build from parquet
-    df = pd.read_parquet(os.path.join(PROCESSED_DIR, "features_deploy.parquet"))
-    return {
-        user: group.reset_index(drop=True)
-        for user, group in df.groupby("user")
-    }
+    if os.path.exists(par_path):
+        df = pd.read_parquet(par_path)
+        return {
+            user: group.reset_index(drop=True)
+            for user, group in df.groupby("user")
+        }
 
-model, feat_cols = load_model()
-user_index       = load_user_index()
-user_list        = sorted(user_index.keys())
+    raise FileNotFoundError(
+        f"Neither user_index.parquet.pkl nor features_deploy.parquet "
+        f"found in {PROCESSED_DIR}\n"
+        f"Available files: {os.listdir(PROCESSED_DIR) if os.path.exists(PROCESSED_DIR) else 'folder missing'}"
+    )
 
-st.set_page_config(
-    page_title="Spotify Repeat Predictor",
-    page_icon="🎵",
-    layout="wide",
-)
-
-# ── Load model directly (no API needed) ──────────────────────
-@st.cache_resource
-def load_model():
-    with open(os.path.join(MODEL_DIR, "lgbm_model.pkl"), "rb") as f:
-        model, feat_cols = pickle.load(f)
-    return model, feat_cols
-
-@st.cache_data
-def load_features():
-    return pd.read_csv(os.path.join(PROCESSED_DIR, "features.csv"))
-
+# ── Load everything ───────────────────────────────────────────
 try:
     model, feat_cols = load_model()
-    features_df      = load_features()
-    model_loaded     = True
+    user_index       = load_user_index()
+    user_list        = sorted(user_index.keys())
 except Exception as e:
     st.error(f"❌ Could not load model: {e}")
+    show_available_files()   # ← shows exactly what files are present
     st.stop()
 
 # ── Header ────────────────────────────────────────────────────
