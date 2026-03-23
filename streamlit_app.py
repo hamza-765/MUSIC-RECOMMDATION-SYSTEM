@@ -4,6 +4,10 @@ import pickle
 import os
 import matplotlib.pyplot as plt
 
+BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR     = os.path.join(BASE_DIR, "model_outputs")
+PROCESSED_DIR = os.path.join(BASE_DIR, "processed")
+
 @st.cache_resource
 def load_model():
     with open(os.path.join(MODEL_DIR, "lgbm_model.pkl"), "rb") as f:
@@ -34,12 +38,6 @@ st.set_page_config(
     page_icon="🎵",
     layout="wide",
 )
-
-
-
-BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
-MODEL_DIR     = os.path.join(BASE_DIR, "model_outputs")
-PROCESSED_DIR = os.path.join(BASE_DIR, "processed")
 
 # ── Load model directly (no API needed) ──────────────────────
 @st.cache_resource
