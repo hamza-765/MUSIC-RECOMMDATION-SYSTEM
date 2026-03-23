@@ -1,0 +1,11 @@
+.venv/
+data/
+processed/features.csv
+processed/features_slim.csv
+__pycache__/
+*.pyc
+.env
+.DS_Store
+Thumbs.db
+MUSIC-RECOMMDATION-SYSTEM/
+*.ipynb_checkpoints
