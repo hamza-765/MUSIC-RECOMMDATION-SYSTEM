@@ -35,8 +35,11 @@ st.set_page_config(
     layout="wide",
 )
 
-MODEL_DIR     = "./model_outputs"
-PROCESSED_DIR = "./processed"
+
+
+BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR     = os.path.join(BASE_DIR, "model_outputs")
+PROCESSED_DIR = os.path.join(BASE_DIR, "processed")
 
 # ── Load model directly (no API needed) ──────────────────────
 @st.cache_resource
