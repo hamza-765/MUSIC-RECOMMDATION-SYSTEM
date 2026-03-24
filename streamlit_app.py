@@ -74,7 +74,7 @@ st.sidebar.markdown(f"**Repeat rate:** {repeat_rate:.1%}")
 st.sidebar.divider()
 st.sidebar.header("⚙️ Settings")
 top_n     = st.sidebar.slider("Top N Recommendations", 5, 20, 10)
-threshold = st.sidebar.slider("Repeat Threshold", 0.1, 0.9, 0.5, step=0.05)
+threshold = st.sidebar.slider("Repeat Threshold", 0.1, 0.9, 0.3, step=0.05)
 
 st.divider()
 
